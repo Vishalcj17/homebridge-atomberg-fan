@@ -14,6 +14,8 @@ export class AtombergFanPlatformAccessory {
   private lastPowerCommand: boolean | null = null;
   private commandTimeout: NodeJS.Timeout | null = null;
   private lastCommandTime = 0;
+  private lastOnlineProbeTime = 0;
+  private static readonly ONLINE_PROBE_COOLDOWN_MS = 30 * 1000;
 
   constructor(
     private readonly platform: AtombergFanPlatform,
@@ -62,15 +64,35 @@ export class AtombergFanPlatformAccessory {
     this.refreshDeviceStatus(this.fanState);
   }
 
-  private validateDeviceConnectionStatus() {
-    if (!this.fanState.is_online) {
+  private async ensureOnlineOrThrow() {
+    if (this.fanState.is_online) return;
+
+    const now = Date.now();
+    if (now - this.lastOnlineProbeTime < AtombergFanPlatformAccessory.ONLINE_PROBE_COOLDOWN_MS) {
       this.platform.log.info('Device is offline, cannot update characteristics');
       throw new this.platform.api.hap.HapStatusError(HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
+
+    this.lastOnlineProbeTime = now;
+    try {
+      const deviceId = this.accessory.context.device.device_id;
+      const probed = await this.atombergApi.getDeviceStateForDevice(deviceId);
+      if (probed && probed.is_online) {
+        this.platform.log.debug(`Device '${this.accessory.displayName}' is online (API probe)`);
+        this.refreshDeviceStatus(probed);
+        return;
+      }
+    } catch (error) {
+      this.platform.log.debug('API probe failed while device marked offline');
+      if (error) this.platform.log.debug(JSON.stringify(error));
+    }
+
+    this.platform.log.info('Device is offline, cannot update characteristics');
+    throw new this.platform.api.hap.HapStatusError(HAPStatus.SERVICE_COMMUNICATION_FAILURE);
   }
 
   private async sendDeviceUpdate(commandData: AtombergFanCommandData) {
-    this.validateDeviceConnectionStatus();
+    await this.ensureOnlineOrThrow();
     const now = Date.now();
     const elapsed = now - this.lastCommandTime;
 
@@ -98,7 +120,7 @@ export class AtombergFanPlatformAccessory {
   // --------------------------
 
   async setActive(value: CharacteristicValue) {
-    this.validateDeviceConnectionStatus();
+    await this.ensureOnlineOrThrow();
     const powerState = value === this.platform.Characteristic.Active.ACTIVE;
 
     if (this.lastPowerCommand === powerState) return; // skip duplicate
@@ -115,7 +137,7 @@ export class AtombergFanPlatformAccessory {
   }
 
   async setRotationSpeed(value: CharacteristicValue) {
-    this.validateDeviceConnectionStatus();
+    await this.ensureOnlineOrThrow();
 
     // Map HomeKit 0–100% to 0–6
     let speed = Math.round((value as number) / 100 * 6);
@@ -143,7 +165,7 @@ export class AtombergFanPlatformAccessory {
   // --------------------------
 
   async setLED(value: CharacteristicValue) {
-    this.validateDeviceConnectionStatus();
+    await this.ensureOnlineOrThrow();
     const newLED = value as boolean;
     if (this.fanState.led === newLED) return;
 
@@ -159,7 +181,7 @@ export class AtombergFanPlatformAccessory {
   }
 
   async setLEDBrightness(value: CharacteristicValue) {
-    this.validateDeviceConnectionStatus();
+    await this.ensureOnlineOrThrow();
     const newBrightness = value as number;
     if (this.fanState.last_recorded_brightness === newBrightness) return;
 

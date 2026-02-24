@@ -154,6 +154,49 @@ export default class AtombergApi {
       });
   }
 
+  public async getDeviceStateForDevice(deviceId: string): Promise<AtombergFanDeviceState | null> {
+    this.logger.debug(`AtombergFanApi: Fetching Device State for ${deviceId}`);
+
+    if (!this.accessToken) {
+      return Promise.reject('No auth token available (login probably failed). ' +
+                'Check your credentials and restart HomeBridge.');
+    }
+
+    return axios.request({
+      method: 'get',
+      url: ATOMBERG_API_HOST + ATOMBERG_API_ENDPOINTS.GET_DEVICE_STATE,
+      headers: {
+        'accept': 'application/json',
+        'Content-Type': 'application/json',
+        'x-api-key': this.config.apiKey,
+        'Authorization': `Bearer ${this.accessToken}`,
+      },
+      params: {
+        'device_id': deviceId,
+      },
+    })
+      .then((response) => {
+        this.logger.debug(JSON.stringify(response.data));
+        if (response.data.status !== 'Success') {
+          return Promise.reject(response.data?.message ?? response.data);
+        }
+
+        const ds = response.data.message?.device_state;
+        if (Array.isArray(ds)) {
+          return (ds[0] as AtombergFanDeviceState) ?? null;
+        }
+        if (ds && typeof ds === 'object') {
+          return ds as AtombergFanDeviceState;
+        }
+        return null;
+      })
+      .catch((error: AxiosError) => {
+        this.logger.debug('AtombergFanApi: AtombergFan platform getDeviceStateForDevice failed');
+        this.handleNetworkRequestError(error);
+        return Promise.reject();
+      });
+  }
+
   public async sendCommand(data: AtombergFanCommandData): Promise<boolean> {
     this.logger.debug('AtombergFanApi: Sending command to AtombergFanApi platform');
 
