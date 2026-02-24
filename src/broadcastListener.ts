@@ -31,15 +31,25 @@ class BroadcastListener extends EventEmitter {
   }
 
   private onMessage(message: Buffer, remote: dgram.RemoteInfo) {
-    try {
-      const res = this.parseMessage(message) as AtombergFanDeviceState;
-      this.log.debug('Received message from ' + remote.address + ':' + remote.port + ' - ' + JSON.stringify(res));
-      if (res) {
-        this.emit('stateChange', res);
-      }
-    } catch (error) {
-      this.log.error('Error parsing broadcast message: ', error);
+    const seenDeviceId = this.parseDeviceSeen(message);
+    if (seenDeviceId) {
+      this.emit('deviceSeen', seenDeviceId);
     }
+
+    const res = this.parseMessage(message) as AtombergFanDeviceState;
+    this.log.debug('Received message from ' + remote.address + ':' + remote.port + ' - ' + JSON.stringify(res));
+    if (res) {
+      this.emit('stateChange', res);
+    }
+  }
+
+  private parseDeviceSeen(message: Buffer): string | null {
+    const s = message.toString('utf8').trim();
+    // Some devices send a lightweight heartbeat like "a8467478c2c0_S1"
+    if (s.length > 0 && s.length <= 64 && /^[a-zA-Z0-9]+_[a-zA-Z0-9]+$/.test(s)) {
+      return s;
+    }
+    return null;
   }
 
   private parseMessage(message: Buffer): AtombergFanDeviceState | null {
@@ -87,7 +97,8 @@ class BroadcastListener extends EventEmitter {
         'last_recorded_color': cool ? (warm ? 'Daylight' : 'Cool') : 'Warm',  // aris starlight only
       } as AtombergFanDeviceState;
     } catch (error) {
-      this.log.error('Error parsing broadcast message: ', error);
+      // Not all packets on this port are state payloads (some are heartbeats).
+      // Avoid spamming logs; treat as "no state" and let deviceSeen keep it online.
       return null;
     }
   }

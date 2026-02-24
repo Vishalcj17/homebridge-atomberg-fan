@@ -64,6 +64,13 @@ export class AtombergFanPlatformAccessory {
     this.refreshDeviceStatus(this.fanState);
   }
 
+  public markOnlineSeen(): void {
+    if (!this.fanState.is_online) {
+      this.fanState.is_online = true;
+      this.platform.log.debug(`Device '${this.accessory.displayName}' seen on UDP heartbeat`);
+    }
+  }
+
   private async ensureOnlineOrThrow() {
     if (this.fanState.is_online) return;
 

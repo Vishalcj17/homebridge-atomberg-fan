@@ -89,6 +89,13 @@ export class AtombergFanPlatform implements DynamicPlatformPlugin {
     this.broadcastListener.on('stateChange', (state: AtombergFanDeviceState) => {
       this.handleStateChange(state);
     });
+    this.broadcastListener.on('deviceSeen', (deviceId: string) => {
+      this.lastBroadcastTime.set(deviceId, Date.now());
+      const accessoryInstance = this.accessoryInstances.get(deviceId);
+      if (accessoryInstance) {
+        accessoryInstance.markOnlineSeen();
+      }
+    });
 
     // Mark devices offline when no broadcast received for a while (fan switch off = no UDP)
     this.offlineCheckInterval = setInterval(() => this.checkOfflineDevices(), AtombergFanPlatform.OFFLINE_CHECK_INTERVAL_MS);
