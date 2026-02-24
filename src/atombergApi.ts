@@ -8,10 +8,14 @@ import { Logger } from 'homebridge';
  * AtombergApi
  * This class is responsible for handling all API calls to the Atomberg platform.
  */
+/** Atomberg throttle: max 5 calls/second */
+const MIN_SEND_COMMAND_INTERVAL_MS = 200;
+
 export default class AtombergApi {
   private accessToken: string;
   private _loginRefreshInterval: NodeJS.Timeout | undefined;
   private _loginRetryTimeouts: NodeJS.Timeout[] = [];
+  private lastSendCommandTime = 0;
 
   constructor(
     private readonly logger: Logger,
@@ -157,6 +161,14 @@ export default class AtombergApi {
       return Promise.reject('No auth token available (login probably failed). ' +
                 'Check your credentials and restart HomeBridge.');
     }
+
+    // Global throttle: max 5 calls/sec (100/day limit; 5/sec throttle)
+    const now = Date.now();
+    const elapsed = now - this.lastSendCommandTime;
+    if (elapsed < MIN_SEND_COMMAND_INTERVAL_MS && this.lastSendCommandTime > 0) {
+      await new Promise(r => setTimeout(r, MIN_SEND_COMMAND_INTERVAL_MS - elapsed));
+    }
+    this.lastSendCommandTime = Date.now();
 
     return axios.request({
       method: 'post',

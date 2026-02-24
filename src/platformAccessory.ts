@@ -180,8 +180,17 @@ export class AtombergFanPlatformAccessory {
 
   public refreshDeviceStatus(deviceState: AtombergFanDeviceState): void {
     try {
+      // Always keep in-memory state in sync so validateDeviceConnectionStatus() and UI stay correct
+      this.fanState = { ...deviceState };
+
       if (!deviceState.is_online) {
         this.platform.log.debug(`Device '${this.accessory.displayName}' is offline`);
+        // Still update UI to show off state so Home app reflects reality
+        this.fanService.updateCharacteristic(this.platform.Characteristic.Active,
+          this.platform.Characteristic.Active.INACTIVE);
+        this.fanService.getCharacteristic(this.platform.Characteristic.RotationSpeed).updateValue(0);
+        this.lightbulbService.updateCharacteristic(this.platform.Characteristic.On, false);
+        this.lightbulbService.updateCharacteristic(this.platform.Characteristic.Brightness, 0);
         return;
       }
 
@@ -208,7 +217,7 @@ export class AtombergFanPlatformAccessory {
       );
       this.lightbulbService.updateCharacteristic(
         this.platform.Characteristic.Brightness,
-        deviceState.last_recorded_brightness || 100
+        deviceState.last_recorded_brightness ?? 100
       );
 
     } catch (error) {

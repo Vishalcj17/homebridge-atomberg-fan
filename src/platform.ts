@@ -14,12 +14,19 @@ export class AtombergFanPlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service = this.api.hap.Service;
   public readonly Characteristic: typeof Characteristic = this.api.hap.Characteristic;
 
+  /** Consider device offline after no UDP broadcast for this long (avoids API calls) */
+  private static readonly OFFLINE_AFTER_MS = 5 * 60 * 1000; // 5 minutes
+  private static readonly OFFLINE_CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
+
   // this is used to track restored cached accessories
   public readonly accessories: PlatformAccessory[] = [];
   public readonly atombergApi: AtombergApi;
   public readonly broadcastListener: BroadcastListener;
   public readonly platformConfig: AtombergFanPlatformConfig;
   private readonly accessoryInstances: Map<string, AtombergFanPlatformAccessory> = new Map();
+  /** Last time we received a UDP broadcast per device (so we can mark offline when silent) */
+  private readonly lastBroadcastTime = new Map<string, number>();
+  private offlineCheckInterval: NodeJS.Timeout | undefined;
 
   constructor(
     public readonly log: Logger,
@@ -82,6 +89,38 @@ export class AtombergFanPlatform implements DynamicPlatformPlugin {
     this.broadcastListener.on('stateChange', (state: AtombergFanDeviceState) => {
       this.handleStateChange(state);
     });
+
+    // Mark devices offline when no broadcast received for a while (fan switch off = no UDP)
+    this.offlineCheckInterval = setInterval(() => this.checkOfflineDevices(), AtombergFanPlatform.OFFLINE_CHECK_INTERVAL_MS);
+  }
+
+  private makeOfflineState(deviceId: string): AtombergFanDeviceState {
+    return {
+      device_id: deviceId,
+      is_online: false,
+      power: false,
+      led: false,
+      sleep_mode: false,
+      last_recorded_speed: 0,
+      timer_hours: 0,
+      timer_time_elapsed_mins: 0,
+      ts_epoch_seconds: 0,
+      last_recorded_brightness: 0,
+      last_recorded_color: '',
+    };
+  }
+
+  private checkOfflineDevices(): void {
+    const now = Date.now();
+    for (const [deviceId, instance] of this.accessoryInstances) {
+      const last = this.lastBroadcastTime.get(deviceId);
+      // Only mark offline if we've seen a broadcast before and it's been too long
+      if (last !== undefined && last > 0 && (now - last) > AtombergFanPlatform.OFFLINE_AFTER_MS) {
+        this.log.debug(`No broadcast from ${deviceId} for ${Math.round((now - last) / 1000)}s, marking offline`);
+        instance.refreshDeviceStatus(this.makeOfflineState(deviceId));
+        this.lastBroadcastTime.set(deviceId, 0); // avoid re-marking every interval until next broadcast
+      }
+    }
   }
 
   /**
@@ -179,7 +218,7 @@ export class AtombergFanPlatform implements DynamicPlatformPlugin {
   }
 
   handleStateChange(state: AtombergFanDeviceState) {
-    // Find the corresponding accessory and update its state
+    this.lastBroadcastTime.set(state.device_id, Date.now());
     const accessoryInstance = this.accessoryInstances.get(state.device_id);
     if (accessoryInstance) {
       this.log.debug('Updating state for accessory:', state.device_id);
